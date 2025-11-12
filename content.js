@@ -30,15 +30,34 @@ class KeywordExtractor {
     try {
       const { keyword, options } = request;
       
+      if (!keyword || keyword.trim() === '') {
+        throw new Error('Please enter a keyword to search for');
+      }
+      
+      console.log('Starting keyword extraction for:', keyword);
+      
       // Clear existing highlights
       this.clearHighlights();
       
-      // Extract keywords
-      const results = this.extractKeywords(keyword, options);
+      // Extract keywords with error handling
+      let results = [];
+      try {
+        results = this.extractKeywords(keyword, options);
+      } catch (extractError) {
+        console.error('Error in extractKeywords:', extractError);
+        throw new Error(`Search failed: ${extractError.message}`);
+      }
+      
+      console.log('Extraction complete, found', results.length, 'matches');
       
       // Apply highlights if requested
       if (options.highlight && results.length > 0) {
-        this.highlightMatches(keyword, options);
+        try {
+          this.highlightMatches(keyword, options);
+        } catch (highlightError) {
+          console.warn('Highlighting failed:', highlightError);
+          // Don't fail the entire operation if highlighting fails
+        }
       }
       
       sendResponse({
@@ -49,7 +68,7 @@ class KeywordExtractor {
       console.error('Error extracting keywords:', error);
       sendResponse({
         success: false,
-        error: error.message
+        error: error.message || 'An unknown error occurred'
       });
     }
   }
@@ -89,17 +108,27 @@ class KeywordExtractor {
       throw new Error('Invalid regular expression: ' + error.message);
     }
 
-    // Get all text nodes in the document
-    const textNodes = this.getAllTextNodes(document.body);
-    console.log(`Searching in ${textNodes.length} text nodes`);
+    // Try two approaches: individual text nodes and combined text
+    const results1 = this.searchInTextNodes(keyword, searchPattern, options);
+    const results2 = this.searchInCombinedText(keyword, searchPattern, options);
     
-    let totalTextLength = 0;
+    // Combine results and remove duplicates based on position
+    const allResults = [...results1, ...results2];
+    const uniqueResults = this.removeDuplicateMatches(allResults);
+    
+    console.log(`Found ${uniqueResults.length} total matches (${results1.length} from nodes, ${results2.length} from combined text)`);
+    return uniqueResults;
+  }
+
+  searchInTextNodes(keyword, searchPattern, options) {
+    const results = [];
+    const textNodes = this.getAllTextNodes(document.body);
+    console.log(`Searching in ${textNodes.length} individual text nodes`);
+    
     textNodes.forEach((node, nodeIndex) => {
       const text = node.textContent;
-      totalTextLength += text.length;
       let match;
       
-      // Reset regex lastIndex for global searches
       searchPattern.lastIndex = 0;
       
       while ((match = searchPattern.exec(text)) !== null) {
@@ -110,7 +139,6 @@ class KeywordExtractor {
         
         let context = text.substring(contextStart, contextEnd);
         
-        // Add ellipsis if context is truncated
         if (contextStart > 0) context = '...' + context;
         if (contextEnd < text.length) context = context + '...';
         
@@ -121,21 +149,111 @@ class KeywordExtractor {
           context: context,
           location: location,
           position: {
+            type: 'node',
             node: nodeIndex,
             start: matchStart,
             end: matchEnd
           }
         });
         
-        // Prevent infinite loop with zero-length matches
         if (match[0].length === 0) {
           searchPattern.lastIndex++;
         }
       }
     });
     
-    console.log(`Found ${results.length} matches in ${totalTextLength} characters of text`);
     return results;
+  }
+
+  searchInCombinedText(keyword, searchPattern, options) {
+    const results = [];
+    
+    // Get all visible text content from the page
+    const visibleText = this.getVisibleTextContent();
+    console.log(`Searching in combined text (${visibleText.length} characters)`);
+    
+    let match;
+    searchPattern.lastIndex = 0;
+    
+    while ((match = searchPattern.exec(visibleText)) !== null) {
+      const matchStart = match.index;
+      const matchEnd = matchStart + match[0].length;
+      const contextStart = Math.max(0, matchStart - 50);
+      const contextEnd = Math.min(visibleText.length, matchEnd + 50);
+      
+      let context = visibleText.substring(contextStart, contextEnd);
+      
+      if (contextStart > 0) context = '...' + context;
+      if (contextEnd < visibleText.length) context = context + '...';
+      
+      results.push({
+        match: match[0],
+        context: context,
+        location: 'Combined page text',
+        position: {
+          type: 'combined',
+          start: matchStart,
+          end: matchEnd
+        }
+      });
+      
+      if (match[0].length === 0) {
+        searchPattern.lastIndex++;
+      }
+    }
+    
+    return results;
+  }
+
+  getVisibleTextContent() {
+    // Get text from common content containers, excluding navigation, ads, etc.
+    const selectors = [
+      'main', 'article', '[role="main"]', '.content', '#content',
+      '.post', '.entry', '.article', 'p', 'div', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
+    ];
+    
+    let allText = '';
+    
+    // Try to get text from main content areas first
+    for (const selector of selectors.slice(0, 5)) { // Try main content selectors first
+      const elements = document.querySelectorAll(selector);
+      if (elements.length > 0) {
+        elements.forEach(el => {
+          if (this.isElementVisible(el)) {
+            allText += ' ' + el.innerText;
+          }
+        });
+        if (allText.length > 1000) break; // If we found substantial content, use it
+      }
+    }
+    
+    // Fallback to body text if no main content found
+    if (allText.length < 1000) {
+      allText = document.body.innerText || document.body.textContent || '';
+    }
+    
+    return allText;
+  }
+
+  isElementVisible(element) {
+    const style = window.getComputedStyle(element);
+    return style.display !== 'none' && 
+           style.visibility !== 'hidden' && 
+           style.opacity !== '0' &&
+           element.offsetParent !== null;
+  }
+
+  removeDuplicateMatches(matches) {
+    const seen = new Set();
+    return matches.filter(match => {
+      // Create a unique key based on the match text and approximate position
+      const key = `${match.match}-${match.context.substring(0, 30)}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
   }
 
   getAllTextNodes(element) {
