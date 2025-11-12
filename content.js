@@ -64,6 +64,8 @@ class KeywordExtractor {
   }
 
   extractKeywords(keyword, options) {
+    console.log('Extracting keywords:', keyword, 'Options:', options);
+    
     const results = [];
     const { caseSensitive, regexMode } = options;
     
@@ -82,15 +84,19 @@ class KeywordExtractor {
         const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         searchPattern = new RegExp(escapedKeyword, flags);
       }
+      console.log('Search pattern:', searchPattern);
     } catch (error) {
       throw new Error('Invalid regular expression: ' + error.message);
     }
 
     // Get all text nodes in the document
     const textNodes = this.getAllTextNodes(document.body);
+    console.log(`Searching in ${textNodes.length} text nodes`);
     
+    let totalTextLength = 0;
     textNodes.forEach((node, nodeIndex) => {
       const text = node.textContent;
+      totalTextLength += text.length;
       let match;
       
       // Reset regex lastIndex for global searches
@@ -128,6 +134,7 @@ class KeywordExtractor {
       }
     });
     
+    console.log(`Found ${results.length} matches in ${totalTextLength} characters of text`);
     return results;
   }
 
@@ -138,24 +145,23 @@ class KeywordExtractor {
       NodeFilter.SHOW_TEXT,
       {
         acceptNode: (node) => {
+          // Skip empty text nodes
+          if (!node.textContent || node.textContent.trim().length === 0) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          
           // Skip script, style, and other non-visible elements
           const parent = node.parentElement;
           if (!parent) return NodeFilter.FILTER_REJECT;
           
-          const style = window.getComputedStyle(parent);
-          if (style.display === 'none' || 
-              style.visibility === 'hidden' ||
-              style.opacity === '0') {
-            return NodeFilter.FILTER_REJECT;
-          }
-          
           const tagName = parent.tagName.toLowerCase();
-          if (['script', 'style', 'noscript', 'head'].includes(tagName)) {
+          if (['script', 'style', 'noscript', 'head', 'meta', 'link'].includes(tagName)) {
             return NodeFilter.FILTER_REJECT;
           }
           
-          // Only include nodes with actual text content
-          if (node.textContent.trim().length === 0) {
+          // Don't check computed styles as it can be expensive and may reject valid text
+          // Just check basic visibility attributes
+          if (parent.style.display === 'none' || parent.hidden) {
             return NodeFilter.FILTER_REJECT;
           }
           
@@ -169,6 +175,7 @@ class KeywordExtractor {
       textNodes.push(node);
     }
     
+    console.log(`Found ${textNodes.length} text nodes to search`);
     return textNodes;
   }
 
