@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keyword Harvest</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🌾 Keyword Harvest</h1>
+    </header>
+    
+    <div class="search-section">
+      <div class="input-group">
+        <input type="text" id="keyword-input" placeholder="Enter keyword or phrase..." autofocus>
+        <button id="extract-btn" class="primary-btn">Extract</button>
+      </div>
+      
+      <div class="options">
+        <label class="checkbox-label">
+          <input type="checkbox" id="case-sensitive">
+          <span class="checkmark"></span>
+          Case sensitive
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="regex-mode">
+          <span class="checkmark"></span>
+          Regex mode
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="highlight-toggle">
+          <span class="checkmark"></span>
+          Highlight on page
+        </label>
+      </div>
+    </div>
+
+    <div class="results-section">
+      <div class="results-header">
+        <span id="results-count">0 matches found</span>
+        <div class="action-buttons">
+          <button id="copy-all-btn" class="secondary-btn" disabled>Copy All</button>
+          <div class="export-dropdown">
+            <button id="export-btn" class="secondary-btn" disabled>Export ▼</button>
+            <div class="dropdown-content">
+              <a href="#" id="export-txt">Export as TXT</a>
+              <a href="#" id="export-json">Export as JSON</a>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div id="results-container" class="results-container">
+        <div class="empty-state">
+          <p>Enter a keyword above and click "Extract" to start harvesting!</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="history-section">
+      <h3>Recent Searches</h3>
+      <div id="history-container" class="history-container">
+        <p class="empty-history">No recent searches</p>
+      </div>
+    </div>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
