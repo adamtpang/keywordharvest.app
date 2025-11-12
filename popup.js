@@ -19,6 +19,7 @@ class KeywordHarvest {
     const keywordInput = document.getElementById('keyword-input');
     const extractBtn = document.getElementById('extract-btn');
     const copyAllBtn = document.getElementById('copy-all-btn');
+    const deleteBtn = document.getElementById('delete-matches-btn');
     const exportTxtBtn = document.getElementById('export-txt');
     const exportJsonBtn = document.getElementById('export-json');
     const highlightToggle = document.getElementById('highlight-toggle');
@@ -29,6 +30,7 @@ class KeywordHarvest {
     });
     
     copyAllBtn.addEventListener('click', () => this.copyAllResults());
+    deleteBtn.addEventListener('click', () => this.deleteMatches());
     exportTxtBtn.addEventListener('click', () => this.exportResults('txt'));
     exportJsonBtn.addEventListener('click', () => this.exportResults('json'));
     
@@ -286,11 +288,49 @@ Location: ${result.location}
     }
   }
 
+  async deleteMatches() {
+    if (this.results.length === 0) return;
+
+    const confirmed = confirm(
+      `Are you sure you want to delete ${this.results.length} matches of "${document.getElementById('keyword-input').value}" from the page?\n\nThis action cannot be undone!`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const keyword = document.getElementById('keyword-input').value;
+      const caseSensitive = document.getElementById('case-sensitive').checked;
+      const regexMode = document.getElementById('regex-mode').checked;
+
+      const response = await chrome.tabs.sendMessage(this.currentTabId, {
+        action: 'deleteMatches',
+        keyword: keyword,
+        options: {
+          caseSensitive,
+          regexMode
+        }
+      });
+
+      if (response && response.success) {
+        this.showSuccessMessage(`Deleted ${response.deletedCount} matches!`);
+        // Re-extract to update counts
+        setTimeout(() => this.extractKeywords(), 1000);
+      } else {
+        this.showError(response?.error || 'Failed to delete matches');
+      }
+    } catch (error) {
+      console.error('Error deleting matches:', error);
+      this.showError('Could not delete matches. This may not be supported on this page.');
+    }
+  }
+
   updateActionButtons(enabled) {
     const copyBtn = document.getElementById('copy-all-btn');
+    const deleteBtn = document.getElementById('delete-matches-btn');
     const exportBtn = document.getElementById('export-btn');
     
     copyBtn.disabled = !enabled;
+    deleteBtn.disabled = !enabled;
     exportBtn.disabled = !enabled;
   }
 

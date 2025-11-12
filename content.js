@@ -18,6 +18,9 @@ class KeywordExtractor {
           return true; // Keep message channel open for async response
         } else if (request.action === 'toggleHighlight') {
           this.handleToggleHighlight(request, sendResponse);
+        } else if (request.action === 'deleteMatches') {
+          this.handleDeleteMatches(request, sendResponse);
+          return true; // Keep message channel open for async response
         }
       } catch (error) {
         console.error('Error in message listener:', error);
@@ -80,6 +83,136 @@ class KeywordExtractor {
       this.clearHighlights();
     }
     sendResponse({ success: true });
+  }
+
+  async handleDeleteMatches(request, sendResponse) {
+    try {
+      const { keyword, options } = request;
+      
+      if (!keyword || keyword.trim() === '') {
+        throw new Error('Please enter a keyword to delete');
+      }
+      
+      console.log('Starting match deletion for:', keyword);
+      
+      let deletedCount = 0;
+      
+      if (this.isGoogleDocs()) {
+        deletedCount = await this.deleteMatchesInGoogleDocs(keyword, options);
+      } else {
+        deletedCount = await this.deleteMatchesInRegularPage(keyword, options);
+      }
+      
+      console.log(`Deleted ${deletedCount} matches`);
+      
+      sendResponse({
+        success: true,
+        deletedCount: deletedCount
+      });
+    } catch (error) {
+      console.error('Error deleting matches:', error);
+      sendResponse({
+        success: false,
+        error: error.message || 'Failed to delete matches'
+      });
+    }
+  }
+
+  async deleteMatchesInGoogleDocs(keyword, options) {
+    console.log('Attempting to delete matches in Google Docs');
+    
+    // For Google Docs, we'll use the Find and Replace functionality
+    // This is tricky as Google Docs has complex keyboard shortcuts
+    let deletedCount = 0;
+    
+    try {
+      // Try to use Ctrl+H (Find and Replace)
+      const event = new KeyboardEvent('keydown', {
+        key: 'h',
+        code: 'KeyH',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true
+      });
+      
+      document.activeElement.dispatchEvent(event);
+      
+      // Wait a bit for the dialog to open
+      await this.sleep(500);
+      
+      // Alternative approach: try to select all and replace using execCommand
+      const allText = this.getGoogleDocsText();
+      const { caseSensitive, regexMode } = options;
+      
+      let searchPattern;
+      let flags = 'g';
+      if (!caseSensitive) flags += 'i';
+      
+      if (regexMode) {
+        searchPattern = new RegExp(keyword, flags);
+      } else {
+        const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        searchPattern = new RegExp(escapedKeyword, flags);
+      }
+      
+      const matches = allText.match(searchPattern);
+      deletedCount = matches ? matches.length : 0;
+      
+      // Show a message to user about how to manually delete
+      if (deletedCount > 0) {
+        const message = `Found ${deletedCount} matches. To delete them:\n\n1. Press Ctrl+H (Find & Replace)\n2. Search for: "${keyword}"\n3. Replace with: (leave empty)\n4. Click "Replace all"\n\nOr use Ctrl+F to find each instance and delete manually.`;
+        alert(message);
+      }
+      
+    } catch (error) {
+      console.error('Google Docs deletion failed:', error);
+      throw new Error('Google Docs text deletion requires manual Find & Replace (Ctrl+H)');
+    }
+    
+    return deletedCount;
+  }
+
+  async deleteMatchesInRegularPage(keyword, options) {
+    console.log('Attempting to delete matches in regular page');
+    
+    const { caseSensitive, regexMode } = options;
+    let deletedCount = 0;
+    
+    let searchPattern;
+    let flags = 'g';
+    if (!caseSensitive) flags += 'i';
+    
+    try {
+      if (regexMode) {
+        searchPattern = new RegExp(keyword, flags);
+      } else {
+        const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        searchPattern = new RegExp(escapedKeyword, flags);
+      }
+    } catch (error) {
+      throw new Error('Invalid regular expression: ' + error.message);
+    }
+
+    // Get all text nodes
+    const textNodes = this.getAllTextNodes(document.body);
+    
+    textNodes.forEach(node => {
+      const originalText = node.textContent;
+      const newText = originalText.replace(searchPattern, (match) => {
+        deletedCount++;
+        return ''; // Replace with empty string to delete
+      });
+      
+      if (originalText !== newText) {
+        node.textContent = newText;
+      }
+    });
+    
+    return deletedCount;
+  }
+
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   extractKeywords(keyword, options) {
@@ -206,33 +339,136 @@ class KeywordExtractor {
   }
 
   getVisibleTextContent() {
-    // Get text from common content containers, excluding navigation, ads, etc.
-    const selectors = [
-      'main', 'article', '[role="main"]', '.content', '#content',
-      '.post', '.entry', '.article', 'p', 'div', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
-    ];
+    // Special handling for Google Docs
+    if (this.isGoogleDocs()) {
+      return this.getGoogleDocsText();
+    }
     
+    // Try multiple approaches to get all text
     let allText = '';
     
-    // Try to get text from main content areas first
-    for (const selector of selectors.slice(0, 5)) { // Try main content selectors first
+    // Method 1: Try common content selectors
+    const selectors = [
+      'main', 'article', '[role="main"]', '.content', '#content',
+      '.post', '.entry', '.article', '.document', '[data-docs-text-content]'
+    ];
+    
+    for (const selector of selectors) {
       const elements = document.querySelectorAll(selector);
       if (elements.length > 0) {
         elements.forEach(el => {
           if (this.isElementVisible(el)) {
-            allText += ' ' + el.innerText;
+            const text = el.innerText || el.textContent;
+            if (text && text.length > allText.length) {
+              allText = text;
+            }
           }
         });
-        if (allText.length > 1000) break; // If we found substantial content, use it
       }
     }
     
-    // Fallback to body text if no main content found
+    // Method 2: If still short, try body text
     if (allText.length < 1000) {
-      allText = document.body.innerText || document.body.textContent || '';
+      const bodyText = document.body.innerText || document.body.textContent || '';
+      if (bodyText.length > allText.length) {
+        allText = bodyText;
+      }
     }
     
+    // Method 3: Last resort - concatenate all visible text elements
+    if (allText.length < 1000) {
+      const allElements = document.querySelectorAll('p, div, span, h1, h2, h3, h4, h5, h6, li, td, th');
+      let concatenatedText = '';
+      allElements.forEach(el => {
+        if (this.isElementVisible(el) && el.innerText) {
+          concatenatedText += ' ' + el.innerText;
+        }
+      });
+      if (concatenatedText.length > allText.length) {
+        allText = concatenatedText;
+      }
+    }
+    
+    console.log(`Extracted text length: ${allText.length} characters`);
     return allText;
+  }
+
+  isGoogleDocs() {
+    return window.location.hostname.includes('docs.google.com') ||
+           document.querySelector('.kix-canvas-tile-content') !== null ||
+           document.querySelector('[data-docs-text-content]') !== null;
+  }
+
+  getGoogleDocsText() {
+    console.log('Detected Google Docs, using specialized extraction');
+    
+    // Try multiple Google Docs specific selectors
+    const googleDocsSelectors = [
+      '.kix-canvas-tile-content',
+      '[data-docs-text-content]',
+      '.kix-line-contenteditable',
+      '.docs-texteventtarget-iframe',
+      '.kix-canvas-tile-selection'
+    ];
+    
+    let allText = '';
+    
+    // Method 1: Try Canvas content (main document area)
+    const canvasElements = document.querySelectorAll('.kix-canvas-tile-content, .kix-canvas-tile-selection');
+    if (canvasElements.length > 0) {
+      canvasElements.forEach(el => {
+        const text = el.innerText || el.textContent;
+        if (text) {
+          allText += ' ' + text;
+        }
+      });
+    }
+    
+    // Method 2: Try data attributes
+    const dataElements = document.querySelectorAll('[data-docs-text-content]');
+    if (dataElements.length > 0) {
+      dataElements.forEach(el => {
+        const text = el.innerText || el.textContent || el.getAttribute('data-docs-text-content');
+        if (text) {
+          allText += ' ' + text;
+        }
+      });
+    }
+    
+    // Method 3: If still empty, use Ctrl+A approach
+    if (allText.length < 100) {
+      console.log('Using selection-based extraction for Google Docs');
+      allText = this.getTextViaSelection();
+    }
+    
+    console.log(`Google Docs text extracted: ${allText.length} characters`);
+    return allText;
+  }
+
+  getTextViaSelection() {
+    try {
+      // Save current selection
+      const currentSelection = window.getSelection().rangeCount > 0 ? 
+        window.getSelection().getRangeAt(0) : null;
+      
+      // Select all text
+      const selection = window.getSelection();
+      selection.selectAllChildren(document.body);
+      
+      // Get selected text
+      const allText = selection.toString();
+      
+      // Restore original selection
+      selection.removeAllRanges();
+      if (currentSelection) {
+        selection.addRange(currentSelection);
+      }
+      
+      return allText;
+    } catch (error) {
+      console.error('Selection-based extraction failed:', error);
+      return document.body.innerText || document.body.textContent || '';
+    }
   }
 
   isElementVisible(element) {
