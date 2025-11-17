@@ -28,12 +28,12 @@ class KeywordHarvest {
     keywordInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') this.extractKeywords();
     });
-    
+
     copyAllBtn.addEventListener('click', () => this.copyAllResults());
     deleteBtn.addEventListener('click', () => this.deleteMatches());
     exportTxtBtn.addEventListener('click', () => this.exportResults('txt'));
     exportJsonBtn.addEventListener('click', () => this.exportResults('json'));
-    
+
     highlightToggle.addEventListener('change', (e) => {
       this.toggleHighlighting(e.target.checked);
     });

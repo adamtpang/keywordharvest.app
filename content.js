@@ -37,7 +37,6 @@ class KeywordExtractor {
         throw new Error('Please enter a keyword to search for');
       }
       
-      console.log('Starting keyword extraction for:', keyword);
       
       // Clear existing highlights
       this.clearHighlights();
@@ -51,7 +50,6 @@ class KeywordExtractor {
         throw new Error(`Search failed: ${extractError.message}`);
       }
       
-      console.log('Extraction complete, found', results.length, 'matches');
       
       // Apply highlights if requested
       if (options.highlight && results.length > 0) {
@@ -93,7 +91,6 @@ class KeywordExtractor {
         throw new Error('Please enter a keyword to delete');
       }
       
-      console.log('Starting match deletion for:', keyword);
       
       let deletedCount = 0;
       
@@ -103,7 +100,6 @@ class KeywordExtractor {
         deletedCount = await this.deleteMatchesInRegularPage(keyword, options);
       }
       
-      console.log(`Deleted ${deletedCount} matches`);
       
       sendResponse({
         success: true,
@@ -119,7 +115,6 @@ class KeywordExtractor {
   }
 
   async deleteMatchesInGoogleDocs(keyword, options) {
-    console.log('Attempting to delete matches in Google Docs');
     
     // For Google Docs, we'll use the Find and Replace functionality
     // This is tricky as Google Docs has complex keyboard shortcuts
@@ -173,7 +168,6 @@ class KeywordExtractor {
   }
 
   async deleteMatchesInRegularPage(keyword, options) {
-    console.log('Attempting to delete matches in regular page');
     
     const { caseSensitive, regexMode } = options;
     let deletedCount = 0;
@@ -215,8 +209,8 @@ class KeywordExtractor {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+
   extractKeywords(keyword, options) {
-    console.log('Extracting keywords:', keyword, 'Options:', options);
     
     const results = [];
     const { caseSensitive, regexMode } = options;
@@ -236,7 +230,6 @@ class KeywordExtractor {
         const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         searchPattern = new RegExp(escapedKeyword, flags);
       }
-      console.log('Search pattern:', searchPattern);
     } catch (error) {
       throw new Error('Invalid regular expression: ' + error.message);
     }
@@ -256,7 +249,6 @@ class KeywordExtractor {
   searchInTextNodes(keyword, searchPattern, options) {
     const results = [];
     const textNodes = this.getAllTextNodes(document.body);
-    console.log(`Searching in ${textNodes.length} individual text nodes`);
     
     textNodes.forEach((node, nodeIndex) => {
       const text = node.textContent;
@@ -389,60 +381,140 @@ class KeywordExtractor {
       }
     }
     
-    console.log(`Extracted text length: ${allText.length} characters`);
     return allText;
   }
 
   isGoogleDocs() {
-    return window.location.hostname.includes('docs.google.com') ||
-           document.querySelector('.kix-canvas-tile-content') !== null ||
-           document.querySelector('[data-docs-text-content]') !== null;
+    try {
+      return (window.location && window.location.hostname && window.location.hostname.includes('docs.google.com')) ||
+             document.querySelector('.kix-canvas-tile-content') !== null ||
+             document.querySelector('[data-docs-text-content]') !== null ||
+             document.querySelector('.kix-canvas') !== null ||
+             document.title.includes('Google Docs');
+    } catch (error) {
+      console.error('Error checking if Google Docs:', error);
+      return false;
+    }
   }
 
   getGoogleDocsText() {
-    console.log('Detected Google Docs, using specialized extraction');
-    
-    // Try multiple Google Docs specific selectors
-    const googleDocsSelectors = [
-      '.kix-canvas-tile-content',
-      '[data-docs-text-content]',
-      '.kix-line-contenteditable',
-      '.docs-texteventtarget-iframe',
-      '.kix-canvas-tile-selection'
-    ];
     
     let allText = '';
+    let bestMethod = 'none';
     
-    // Method 1: Try Canvas content (main document area)
-    const canvasElements = document.querySelectorAll('.kix-canvas-tile-content, .kix-canvas-tile-selection');
-    if (canvasElements.length > 0) {
-      canvasElements.forEach(el => {
+    // Method 1: Try different Google Docs selectors
+    const googleDocsSelectors = [
+      '.kix-canvas-tile-content',
+      '.kix-canvas-tile-selection',  
+      '.kix-page-content-wrapper',
+      '.kix-page-column',
+      '.kix-canvas',
+      '.kix-document-ui',
+      '[data-docs-text-content]',
+      '.kix-line-contenteditable'
+    ];
+    
+    for (const selector of googleDocsSelectors) {
+      const elements = document.querySelectorAll(selector);
+      let methodText = '';
+      
+      elements.forEach(el => {
         const text = el.innerText || el.textContent;
-        if (text) {
-          allText += ' ' + text;
+        if (text && text.trim()) {
+          methodText += ' ' + text;
         }
       });
+      
+      if (methodText.length > allText.length) {
+        allText = methodText;
+        bestMethod = selector;
+      }
     }
     
-    // Method 2: Try data attributes
-    const dataElements = document.querySelectorAll('[data-docs-text-content]');
-    if (dataElements.length > 0) {
-      dataElements.forEach(el => {
-        const text = el.innerText || el.textContent || el.getAttribute('data-docs-text-content');
-        if (text) {
-          allText += ' ' + text;
+    // Method 2: Try to get text from all visible elements
+    if (allText.length < 1000) {
+      console.log('Trying comprehensive element extraction');
+      const allElements = document.querySelectorAll('span, div, p');
+      let comprehensiveText = '';
+      
+      allElements.forEach(el => {
+        if (this.isElementVisible(el) && el.innerText && el.innerText.trim()) {
+          comprehensiveText += ' ' + el.innerText;
         }
       });
+      
+      if (comprehensiveText.length > allText.length) {
+        allText = comprehensiveText;
+        bestMethod = 'comprehensive';
+      }
     }
     
-    // Method 3: If still empty, use Ctrl+A approach
-    if (allText.length < 100) {
-      console.log('Using selection-based extraction for Google Docs');
-      allText = this.getTextViaSelection();
+    // Method 3: Selection-based extraction (Ctrl+A equivalent)
+    if (allText.length < 1000) {
+      const selectionText = this.getTextViaSelection();
+      if (selectionText.length > allText.length) {
+        allText = selectionText;
+        bestMethod = 'selection';
+      }
     }
     
-    console.log(`Google Docs text extracted: ${allText.length} characters`);
+    // Method 4: Try to get from document body as fallback
+    if (allText.length < 500) {
+      const bodyText = document.body.innerText || document.body.textContent || '';
+      if (bodyText.length > allText.length) {
+        allText = bodyText;
+        bestMethod = 'body';
+      }
+    }
+    
+    // Method 5: Try accessing Google Docs internal APIs (experimental)
+    if (allText.length < 1000) {
+      try {
+        const docsText = this.tryGoogleDocsInternalAPI();
+        if (docsText && docsText.length > allText.length) {
+          allText = docsText;
+          bestMethod = 'internal';
+        }
+      } catch (error) {
+      }
+    }
+    
+    
+    // Debug: show first 200 chars to verify content
+    
     return allText;
+  }
+
+  tryGoogleDocsInternalAPI() {
+    // Try to access Google Docs internal data structures
+    try {
+      // Look for common Google Apps script variables
+      const possibleDataSources = [
+        'window.initialData',
+        'window._docs_flag_initialData', 
+        'window.DOCS_modelChunk',
+        'window._docs_annotations_sugg_v2'
+      ];
+      
+      for (const source of possibleDataSources) {
+        try {
+          const data = eval(source);
+          if (data && typeof data === 'object') {
+            // Try to extract text from the data structure
+            const text = JSON.stringify(data);
+            if (text.length > 1000) {
+              return text;
+            }
+          }
+        } catch (e) {
+          // Ignore individual failures
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      return null;
+    }
   }
 
   getTextViaSelection() {
@@ -529,7 +601,6 @@ class KeywordExtractor {
       textNodes.push(node);
     }
     
-    console.log(`Found ${textNodes.length} text nodes to search`);
     return textNodes;
   }
 
